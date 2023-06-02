@@ -54,6 +54,9 @@
 #error "Unexpected txpower constants"
 #endif
 
+/* Get the RTC object for init */
+STM32RTC& rtc = STM32RTC::getInstance();
+
 STM32LoRaWAN* STM32LoRaWAN::instance;
 
 bool STM32LoRaWAN::begin(_lora_band band)
