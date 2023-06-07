@@ -62,6 +62,16 @@ bool STM32LoRaWAN::begin(_lora_band band)
     return failure("Only one STM32LoRaWAN instance can be used");
   instance = this;
 
+  /*
+   * Init RTC as an object :
+   * use the BCD mode = free running BCD calendar
+    */
+  rtc.setClockSource(STM32RTC::LSE_CLOCK);
+  rtc.begin(true, STM32RTC::HOUR_24);
+  /* Attach the callback function before enabling Interrupt */
+  rtc.attachInterrupt(UTIL_TIMER_IRQ_MAP_PROCESS, STM32RTC::ALARM_B);
+  /* The subsecond alarm B will be set during the StartTimerEvent */
+
   UTIL_TIMER_Init();
 
   LoRaMacStatus_t res = LoRaMacInitialization(&LoRaMacPrimitives, &LoRaMacCallbacks, (LoRaMacRegion_t)band);
