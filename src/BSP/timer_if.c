@@ -188,6 +188,13 @@ static uint32_t RtcTimerContext = 0;
 static inline uint32_t GetTimerTicks(void);
 
 /**
+  * @brief define if function is leap or note
+  * @param year
+  * @return true if year is leap else false
+  */
+static inline bool isLeapYear(uint8_t year2k);
+
+/**
   * @brief Writes MSBticks to backup register
   * Absolute RTC time in tick is (MSBticks)<<32 + (32bits binary counter)
   * @note MSBticks incremented every time the 32bits RTC timer wraps around (~44days)
@@ -228,7 +235,7 @@ UTIL_TIMER_Status_t TIMER_IF_Init(void)
     RtcHandle.IsEnabled.RtcFeatures = UINT32_MAX;
 
     /** Enable the Alarm B just after the HAL_RTC_Init */
-    RTC_StartAlarm(RTC_ALARM_B, 0, 0, 0, 0, 0, RTC_HOURFORMAT12_PM, 32UL);
+    RTC_StartAlarm(RTC_ALARM_B, 0, 0, 0, 0, 0, RTC_HOURFORMAT12_PM, ALL_MSK);
 
     /*Stop Timer */
     TIMER_IF_StopTimer();
@@ -253,24 +260,114 @@ UTIL_TIMER_Status_t TIMER_IF_Init(void)
   return ret;
 }
 
+/* Timeout is expressed in ms (not null and greater than guard time) */
 UTIL_TIMER_Status_t TIMER_IF_StartTimer(uint32_t timeout)
 {
   UTIL_TIMER_Status_t ret = UTIL_TIMER_OK;
   /* USER CODE BEGIN TIMER_IF_StartTimer */
 
   /* USER CODE END TIMER_IF_StartTimer */
-  /*Stop timer if one is already started*/
-  TIMER_IF_StopTimer();
-  timeout += RtcTimerContext;
+  if (timeout > TIMEOUT_GUARD_TIME) {
+    /*Stop timer if one is already started*/
+    RTC_StopAlarm(RTC_ALARM_B);
 
-  TIMER_IF_DBG_PRINTF("Start timer: time=%d, alarm=%d\n\r",  GetTimerTicks(), timeout);
+    TIMER_IF_DBG_PRINTF("Start timer for %d ms\n\r",  timeout);
 
-  /* Program ALARM B on subsecond, mask is 32 (and fixed to RTC_ALARMMASK_NONE for calendar) */
-  RTC_StartAlarm(RTC_ALARM_B, 0, 0, 0, 0, UINT32_MAX - timeout, RTC_HOURFORMAT12_PM, 32UL);
+    /* Convert the the timeout value to a BCD calendar value */
+    uint16_t subSecondsToAdd = timeout % 1000;
+
+    timeout = timeout / 1000;
+    uint8_t daysToAdd = timeout / 86400;
+    uint8_t hoursToAdd = (timeout - daysToAdd * 86400) / 3600;
+    uint8_t minutesToAdd = (timeout - daysToAdd * 86400 - hoursToAdd * 3600) / 60;
+    uint8_t secondsToAdd = (timeout - daysToAdd * 86400 - hoursToAdd * 3600 - minutesToAdd * 60);
+    hourAM_PM_t period; /* AM or 24h format */
+    uint8_t hrCurrent, minCurrent, secCurrent;
+    uint32_t subSecondsCurrent;
+    uint8_t weekDay, currentDay, currentMonth, currentYear;
+    /* Retrieve the current calendar*/
+    RTC_GetDate(&currentYear, &currentMonth, &currentDay, &weekDay);
+    RTC_GetTime(&hrCurrent, &minCurrent, &secCurrent, &subSecondsCurrent, &period);
+
+    /* Define the calendar value to set from current date + timeout */
+    uint32_t ss = subSecondsCurrent + subSecondsToAdd;
+    if (ss >= 1000) {
+      ss -= 1000;
+      secondsToAdd++;
+    }
+
+    if (secondsToAdd >= 60) {
+      secondsToAdd = 0;
+      minutesToAdd++;
+    }
+    uint8_t s = secCurrent + secondsToAdd;
+    if (s >= 60) {
+      s -= 60;
+      minutesToAdd++;
+    }
+
+    if (minutesToAdd >= 60) {
+      minutesToAdd -= 60;
+      hoursToAdd++;
+    }
+    uint8_t m = minCurrent + minutesToAdd;
+    if (m >= 60) {
+      m -= 60;
+      hoursToAdd++;
+    }
+
+    if (hoursToAdd >= 24) {
+      hoursToAdd -= 24;
+      daysToAdd++;
+    }
+
+    /* format is HOUR_FORMAT_24 as init by the Lorawan */
+    uint8_t h = hrCurrent + hoursToAdd;
+    if (RTC_GetFormat() == HOUR_FORMAT_12) {
+      if (h >= 24) {
+        h -= 24;
+        daysToAdd++;
+    } else if (h >= 12) {
+        if (period == HOUR_AM) {
+          period = HOUR_PM;
+        } else {
+          period = HOUR_AM;
+          daysToAdd++;
+        }
+
+        if (h > 12) {
+          h -= 12;
+        }
+      }
+    } else if (h >= 24) {
+      h -= 24;
+      daysToAdd++;
+    }
+
+    // numbers of days in each month (february is calculated based on leap year)
+    static uint8_t daysInMonths[] = {31, 0, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+    uint8_t endDay;
+    if (currentMonth == 2) {
+      endDay = isLeapYear(currentYear) ? 29 : 28;
+    } else {
+      endDay = daysInMonths[currentMonth - 1];
+    }
+
+    uint8_t d = currentDay + daysToAdd;
+    if (d > endDay) {
+      d -= endDay;
+    }
+    // month-year overflow isn't handled because its not supported by RTC's alarm
+
+    /* Program ALARM B on subsecond, mask is ALL for calendar */
+    RTC_StartAlarm(RTC_ALARM_B, d, h, m, s, ss, period, ALL_MSK);
 
   /* USER CODE BEGIN TIMER_IF_StartTimer_Last */
 
   /* USER CODE END TIMER_IF_StartTimer_Last */
+  } else {
+    ret = UTIL_TIMER_INVALID_PARAM;
+  }
   return ret;
 }
 
@@ -525,16 +622,38 @@ static inline uint32_t GetTimerTicks(void)
   /* USER CODE BEGIN GetTimerTicks */
 
   /* USER CODE END GetTimerTicks */
+#if 0
   uint32_t ssr = LL_RTC_TIME_GetSubSecond(RTC);
   /* read twice to make sure value it valid*/
   while (ssr != LL_RTC_TIME_GetSubSecond(RTC))
   {
     ssr = LL_RTC_TIME_GetSubSecond(RTC);
   }
-  return UINT32_MAX - ssr;
+//  return UINT32_MAX - ssr;
+   return ssr;
+
+ #else
+  uint32_t bcd_time = LL_RTC_TIME_Get(RTC); /* Format: 0x00HHMMSS */
+  uint32_t binary_time = 0;
+binary_time += (__LL_RTC_CONVERT_BCD2BIN((bcd_time >> 16) & 0xFF)) * 3600;
+binary_time += (__LL_RTC_CONVERT_BCD2BIN((bcd_time >> 8) & 0xFF)) * 60;
+binary_time += (__LL_RTC_CONVERT_BCD2BIN((bcd_time >> 0) & 0xFF)) * 1;
+binary_time = (binary_time * 1000) + (LL_RTC_TIME_GetSubSecond(RTC) *1000)/1000;
+return binary_time;
+#endif
   /* USER CODE BEGIN GetTimerTicks_Last */
 
   /* USER CODE END GetTimerTicks_Last */
+}
+
+static inline bool isLeapYear(uint8_t year2k)
+{
+  int year = year2k + 2000;
+
+  // if year not divisible by 4 - not a leap year
+  // else if year divisible by 4 and not by 100 - a leap year
+  // else if year divisible by 400 - a leap year
+  return (year % 4 != 0) ? false : (year % 100 != 0) ? true : year % 400 == 0;
 }
 
 /* USER CODE BEGIN PrFD */

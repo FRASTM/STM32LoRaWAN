@@ -51,6 +51,7 @@ void UTIL_TIMER_IRQ_MAP_PROCESS(void *data);
 
 /* Exported constants --------------------------------------------------------*/
 /* USER CODE BEGIN EC */
+#define TIMEOUT_GUARD_TIME 3
 
 /* USER CODE END EC */
 
