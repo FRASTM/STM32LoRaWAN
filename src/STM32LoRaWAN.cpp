@@ -75,6 +75,9 @@ bool STM32LoRaWAN::begin(_lora_band band)
   rtc.attachInterrupt(UTIL_TIMER_IRQ_MAP_PROCESS, STM32RTC::ALARM_B);
   /* The subsecond alarm B will be set during the StartTimerEvent */
 
+rtc.setTime(15, 42, 37, 202);
+rtc.setDate(21, 6, 23);
+
   UTIL_TIMER_Init();
 
   LoRaMacStatus_t res = LoRaMacInitialization(&LoRaMacPrimitives, &LoRaMacCallbacks, (LoRaMacRegion_t)band);
